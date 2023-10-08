@@ -24,8 +24,8 @@ void loop()
 
 void drawStats()
 {
+  // draw dart type
   u8g2.setFont(u8g2_font_12x6LED_tf);
-
   switch (type)
   {
   case DART_NORMAL:
@@ -41,14 +41,17 @@ void drawStats()
     u8g2.drawXBM(2, 43 + 9, dart_bmp_width, dart_bmp_height, dart_short);
     break;
   }
-
   u8g2.setFont(u8g2_font_5x8_mf);
   u8g2.drawStr(1, 42, "projectile:");
+
+  // draw timings
   u8g2.drawLine(56, 33 + 9, 56, 63);
   u8g2.setFont(u8g2_font_4x6_mf);
   u8g2.drawStr(58, 42, "TIMINGS (ms):");
   u8g2.drawStr(58, 42 + 8, "spt: xx | xx");
   u8g2.drawStr(58, 42 + 16, "dpt: xx | xx");
+
+  // draw state
 }
 
 void drawTopDisplay()
