@@ -9,8 +9,6 @@
 #define FPS_TO_MPS 0.3047999902464f
 #define MPS_TO_FPS 3.28084f
 
-#define CALC_MJOULE(fps, mass) (500*fps*fps*FPS_TO_MPS*FPS_TO_MPS*mass) // 0.5*mv^2
-
 // HARDWARE CONFIG
 const int buttonPin = D7;
 const int sensorPin1 = D5;
@@ -25,7 +23,9 @@ const double sensor_distance = 5e-2;
 #define IDLE              0b00000000
 
 #define MIN_US_DELAY 360
-#define DISPLAY_BLINK_INTERVAL 500
+#define DISPLAY_BLINK_INTERVAL 200
+#define BUTTON_PRESS_THRESHHOLD 750
+#define BUTTON_DEBOUNCE_MIN_MS 30
 
 #define GET_BIT(data, n) (1 & (data >> n))
 #define SET_BIT(data, n, value) (value ? data |= (1 << n) : data &= ~(1 << n))
@@ -36,6 +36,7 @@ void drawDisplayBuffer();
 void updateProperties();
 void finalize();
 void arm();
+void handleButtonInput();
 
 // interrupt routines
 void IRAM_ATTR SENSOR1_ISR();
@@ -48,15 +49,22 @@ volatile byte state;
 volatile bool sensor1_level, sensor2_level, old_sensor1_level, old_sensor2_level;
 
 // result variables
-double vs1, vs2, vd1, vd2;
-double fps;
 double mass;
 double length;
-DART_TYPE type;
+double vs1, vs2, vd1, vd2;
+double fps;
+double energy;
+byte type_index;
 
 // misc variables
 bool update_display;
-bool blink_state;
-unsigned long last_display_blink;
+
 unsigned long current_ms;
+unsigned long last_blink_ms;
+bool blink_state;
+
+unsigned long button_press_start;
+unsigned long button_press_end;
+bool button_previously_pressed;
+bool discard_button_release;
 #endif

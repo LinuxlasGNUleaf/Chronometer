@@ -2,15 +2,13 @@
 #define BITMAPS_H
 #include <Arduino.h>
 
-enum DART_TYPE
-{
-   DART_NORMAL,
-   DART_SHORT,
-   DART_MEGA
-};
+const byte dart_type_count = 3;
+#define DART_NORMAL 0
+#define DART_SHORT 1
+#define DART_MEGA 2
 
-const unsigned dart_bmp_width = 32;
-const unsigned dart_bmp_height = 12;
+const unsigned int dart_bmp_width = 32;
+const unsigned int dart_bmp_height = 12;
 
 //=====> NORMAL DART
 const double mass_dart_normal = 1.2e-3;

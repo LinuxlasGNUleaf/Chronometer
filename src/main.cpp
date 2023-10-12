@@ -10,7 +10,10 @@ void setup()
   // reset variables
   state = IDLE;
   update_display = false;
-  type = DART_MEGA;
+  type_index = DART_NORMAL;
+  button_press_start = 0;
+  button_previously_pressed = false;
+  discard_button_release = false;
   updateProperties();
 
   // start display
@@ -27,28 +30,13 @@ void setup()
   attachInterrupt(sensorPin2, SENSOR2_ISR, CHANGE);
 
   Serial.begin(115200);
+  Serial.println("\nReady.");
 
   arm();
 }
 
-void printState()
-{
-  Serial.print("0b");
-  for (int i = 7; i >= 0; i--)
-  {
-    Serial.print(GET_BIT(state, i));
-  }
-  Serial.println();
-}
-
-byte old_state = IDLE;
 void loop()
 {
-  if (state != old_state)
-  {
-    printState();
-    old_state = state;
-  }
   // if measurement is complete, start computation
   if (state == ALL_SENSORS_FIRED)
     finalize();
@@ -59,11 +47,13 @@ void loop()
 
   current_ms = millis();
 
-  if (current_ms - last_display_blink > DISPLAY_BLINK_INTERVAL && IS_ARMED())
+  handleButtonInput();
+
+  if (current_ms - last_blink_ms > DISPLAY_BLINK_INTERVAL)
   {
     blink_state = !blink_state;
-    last_display_blink = current_ms;
     update_display = true;
+    last_blink_ms = current_ms;
   }
 
   // if not armed and update has been requested, redraw screen
@@ -172,15 +162,12 @@ void drawDisplayBuffer()
   buf_fps = new char[4];
   buf_j = new char[5];
   sprintf(buf_fps, "%03.0f", constrain(fps, 0, 999));
-  sprintf(buf_j, "%4.0f", constrain(CALC_MJOULE(fps, mass), 0.0f, 9999.0f));
+  sprintf(buf_j, "%4.0f", constrain(energy * 1000, 0.0f, 9999.0f));
 
   // big fps display
   // only draw FPS count when not armed or blink_state is true
-  if (!IS_ARMED() || blink_state)
-  {
-    u8g2.setFont(u8g2_font_inr33_mf);
-    u8g2.drawStr(0, 0, buf_fps);
-  }
+  u8g2.setFont(u8g2_font_inr33_mf);
+  u8g2.drawStr(0, 0, buf_fps);
   u8g2.setFont(u8g2_font_inr16_mf);
   u8g2.drawStr(28 * 3, 33 - 16, "fps");
 
@@ -196,10 +183,10 @@ void drawDisplayBuffer()
   //==========> LOWER HALF OF DISPLAY
   // draw dart type
   u8g2.setFont(u8g2_font_12x6LED_tf);
-  switch (type)
+  switch (type_index)
   {
   case DART_NORMAL:
-    u8g2.drawStr(32 + 7, 43 + 7, "N");
+    u8g2.drawStr(32 + 7, 43 + 7, "S");
     u8g2.drawXBM(2, 43 + 9, dart_bmp_width, dart_bmp_height, dart_normal);
     break;
   case DART_MEGA:
@@ -207,29 +194,51 @@ void drawDisplayBuffer()
     u8g2.drawXBM(2, 43 + 9, dart_bmp_width, dart_bmp_height, dart_mega);
     break;
   case DART_SHORT:
-    u8g2.drawStr(32 + 7, 43 + 7, "S");
+    u8g2.drawStr(32 + 7, 43 + 7, "H");
     u8g2.drawXBM(2, 43 + 9, dart_bmp_width, dart_bmp_height, dart_short);
     break;
   }
   u8g2.setFont(u8g2_font_5x8_mf);
   u8g2.drawStr(1, 42, "projectile:");
 
-  // draw measurements
   u8g2.drawLine(56, 33 + 9, 56, 63);
+  u8g2.drawPixel(56 + 2, 33 + 7);
+
+  // draw measurements
   u8g2.setFont(u8g2_font_4x6_mf);
   u8g2.drawStr(58, 42, "RAW (fps):");
   char buf[20];
-  sprintf(buf, "spt:%03.0f|%03.0f", min(vs1, 999.0), min(vs2, 999.0));
+  sprintf(buf, "spt:%03.0f %03.0f", min(vs1, 999.0), min(vs2, 999.0));
   u8g2.drawStr(58, 42 + 8, buf);
-  sprintf(buf, "dpt:%03.0f|%03.0f", min(vd1, 999.0), min(vd2, 999.0));
+  sprintf(buf, "dpt:%03.0f %03.0f", min(vd1, 999.0), min(vd2, 999.0));
   u8g2.drawStr(58, 42 + 16, buf);
 
+  u8g2.drawLine(103, 42, 103, 63);
+  u8g2.drawPixel(103 + 2, 33 + 7);
+
   // draw state
+  u8g2.setFont(u8g2_font_10x20_tf);
+  if (state == IDLE || blink_state)
+  {
+    u8g2.drawRFrame(109, 44, 14, 20, 4);
+    if (state == IDLE)
+      u8g2.drawStr(111, 46, "I");
+    else
+      u8g2.drawStr(111, 46, "A");
+  }
+  else
+  {
+    u8g2.drawRBox(109, 44, 14, 20, 4);
+    u8g2.setDrawColor(0);
+    u8g2.drawStr(111, 46, "A");
+    u8g2.setDrawColor(1);
+  }
 }
 
 void updateProperties()
 {
-  switch (type)
+  // retrieve current dart specifications
+  switch (type_index)
   {
   case DART_NORMAL:
     mass = mass_dart_normal;
@@ -248,19 +257,27 @@ void updateProperties()
 
 void finalize()
 {
+  // calculate deltas
   spt1 = (ts1_exit - ts1_entry) * 1e-6;
   spt2 = (ts2_exit - ts2_entry) * 1e-6;
   dpt1 = (ts2_entry - ts1_entry) * 1e-6;
   dpt2 = (ts2_exit - ts1_exit) * 1e-6;
 
+  // calculate individual velocity measurements
   vs1 = (length / spt1) * MPS_TO_FPS;
   vs2 = (length / spt2) * MPS_TO_FPS;
   vd1 = (sensor_distance / dpt1) * MPS_TO_FPS;
   vd2 = (sensor_distance / dpt2) * MPS_TO_FPS;
 
+  updateProperties();
+
   fps = (vs1 + vs2 + vd1 + vd2) * 0.25f;
+  energy = (0.5f * fps * fps * FPS_TO_MPS * FPS_TO_MPS * mass); // 0.5*mv^2
+  button_press_start = 0;
+  button_previously_pressed = false;
   update_display = true;
-  state = IDLE;
+
+  arm();
 }
 
 void arm()
@@ -270,7 +287,48 @@ void arm()
   sensor2_level = digitalRead(sensorPin2);
   old_sensor1_level = sensor1_level;
   old_sensor2_level = sensor2_level;
+  update_display = true;
+
   state = ARMED;
-  last_display_blink = millis();
-  blink_state = true;
+}
+
+void handleButtonInput()
+{
+  // button not pressed
+  if (digitalRead(buttonPin))
+  {
+    if (!button_previously_pressed)
+      return;
+
+    if (!discard_button_release)
+    {
+      type_index = (type_index + 1) % dart_type_count;
+      update_display = true;
+    }
+    arm();
+    button_press_end = current_ms;
+    discard_button_release = false;
+    button_previously_pressed = false;
+  }
+  // button pressed
+  else
+  {
+    state = IDLE;
+    if (button_previously_pressed)
+    {
+      // if button is held longer than the threshhold value, cycle the dart and reset the timer
+      if (current_ms - button_press_start > BUTTON_PRESS_THRESHHOLD)
+      {
+        button_press_start = current_ms;
+        type_index = (type_index + 1) % dart_type_count;
+        update_display = true;
+        discard_button_release = true;
+      }
+    }
+    else if (current_ms - button_press_end > BUTTON_DEBOUNCE_MIN_MS)
+    {
+      button_press_start = current_ms;
+      button_previously_pressed = true;
+    }
+  }
 }
